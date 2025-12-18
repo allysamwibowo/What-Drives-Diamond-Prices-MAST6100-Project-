@@ -1,0 +1,208 @@
+---
+title: "Diamonds Characteristics and Pricing Analysis"
+author: "Allysa Wibowo"
+date: "2025-11-27"
+output: word_document
+---
+
+```{r}
+# Read Data
+library(readxl)
+diamonds_data <- read_excel("diamonds dataset 2.xlsx", skip = 1)
+head(diamonds_data)
+summary(diamonds_data)
+```
+
+```{r}
+# Call Library
+library(MASS)
+library(e1071)
+library(class)
+library(ggplot2)
+library(dplyr)
+library(GGally)
+library(corrplot)
+```
+
+```{r}
+# Check missing values per variable
+colSums(is.na(diamonds_data))
+
+# Count duplicated rows
+sum(duplicated(diamonds_data)) 
+
+# Remove duplicated rows to keep only unique athletes
+diamonds_data <- diamonds_data[!duplicated(diamonds_data), ]
+
+# Confirm duplicates are gone
+sum(duplicated(diamonds_data))
+```
+
+```{r}
+# Convert categorical variables into factors
+diamonds_data$cut    <- factor(diamonds_data$cut)
+diamonds_data$color  <- factor(diamonds_data$color)
+diamonds_data$clarity <- factor(diamonds_data$clarity)
+str(diamonds_data)
+```
+
+```{r}
+# Exploratory Data Analysis
+
+# Histogram
+ggplot(diamonds_data, aes(x = price)) + geom_histogram(binwidth = 500)
+
+# Scatterplots
+ggplot(diamonds_data, aes(x = carat, y = price)) + geom_point(alpha = 0.3)
+
+# Boxplots or Violin plots
+ggplot(diamonds_data, aes(x = cut, y = price)) + geom_boxplot()
+
+# Correlation Matrix (for numeric predictors)
+corrplot(cor(diamonds_data[, c("carat","depth","table","x","y","z","price")]),
+         method = "color")
+
+```
+
+# Classification models 
+```{r}
+# CREATE A BINARY CLASSIFICATION TARGET
+# Here we define "High" price as the top 25% most expensive diamonds
+price_threshold <- quantile(diamonds_data$price, 0.75)
+
+diamonds_data$price_class <- ifelse(diamonds_data$price >= price_threshold,
+                                    "High", "NotHigh")
+diamonds_data$price_class <- factor(diamonds_data$price_class,
+                                    levels = c("NotHigh", "High"))
+
+table(diamonds_data$price_class)  # check class balance
+
+# TRAIN–TEST SPLIT (70% train, 30% test)
+n <- nrow(diamonds_data)
+set.seed(123)
+train_index <- sample(seq_len(n), size = 0.7 * n)
+
+train_data <- diamonds_data[train_index, ]
+test_data  <- diamonds_data[-train_index, ]
+
+# 3. CHOOSE PREDICTOR VARIABLES
+# We use all main predictors except the raw price (since that defines price_class)
+predictors <- c("carat", "cut", "color", "clarity",
+                "depth", "table", "x", "y", "z")
+
+# Formula for all models
+form <- as.formula(
+  paste("price_class ~", paste(predictors, collapse = " + "))
+)
+```
+
+```{r}
+# 1. LOGISTIC REGRESSION (GLM, BINOMIAL)
+
+logit_model <- glm(form,
+                   data   = train_data,
+                   family = binomial)
+
+summary(logit_model)  # interpret coefficients, significance, etc.
+
+# Predicted probabilities for the test set
+logit_prob <- predict(logit_model, newdata = test_data, type = "response")
+
+# Convert probabilities to class labels using 0.5 cutoff
+logit_pred <- ifelse(logit_prob >= 0.5, "High", "NotHigh")
+logit_pred <- factor(logit_pred, levels = levels(train_data$price_class))
+
+# Confusion matrix and accuracy
+logit_cm <- table(Predicted = logit_pred, Actual = test_data$price_class)
+logit_cm
+logit_accuracy <- sum(diag(logit_cm)) / sum(logit_cm)
+logit_accuracy
+```
+
+```{r}
+# 2. LINEAR DISCRIMINANT ANALYSIS (LDA)
+
+lda_model <- lda(form, data = train_data)
+lda_model  
+
+lda_pred <- predict(lda_model, newdata = test_data)$class
+
+lda_cm <- table(Predicted = lda_pred, Actual = test_data$price_class)
+lda_cm
+lda_accuracy <- sum(diag(lda_cm)) / sum(lda_cm)
+lda_accuracy
+```
+
+```{r}
+# 3. QUADRATIC DISCRIMINANT ANALYSIS (QDA)
+
+qda_model <- qda(form, data = train_data)
+qda_model 
+
+qda_pred <- predict(qda_model, newdata = test_data)$class
+
+qda_cm <- table(Predicted = qda_pred, Actual = test_data$price_class)
+qda_cm
+qda_accuracy <- sum(diag(qda_cm)) / sum(qda_cm)
+qda_accuracy
+```
+
+```{r}
+# 4. K-NEAREST NEIGHBOURS (KNN, k = 5)
+
+# For KNN we use only numeric predictors and scale them.
+numeric_vars <- c("carat", "depth", "table", "x", "y", "z")
+
+# Create numeric matrices
+train_x <- as.matrix(train_data[, numeric_vars])
+test_x  <- as.matrix(test_data[, numeric_vars])
+
+# Scale using training set parameters
+train_x_scaled <- scale(train_x)
+test_x_scaled  <- scale(test_x,
+                        center = attr(train_x_scaled, "scaled:center"),
+                        scale  = attr(train_x_scaled, "scaled:scale"))
+
+train_y <- train_data$price_class
+test_y  <- test_data$price_class
+
+set.seed(123)
+knn_pred <- knn(train = train_x_scaled,
+                test  = test_x_scaled,
+                cl    = train_y,
+                k     = 5)
+
+knn_cm <- table(Predicted = knn_pred, Actual = test_y)
+knn_cm
+knn_accuracy <- sum(diag(knn_cm)) / sum(knn_cm)
+knn_accuracy
+```
+
+```{r}
+# 5. NEURAL NETWORK
+# Fit a neural network model on training data
+library(nnet)
+set.seed(123)  # for reproducibility
+nn_model <- nnet(price_class ~ ., data = train_data, size = 5, maxit = 500)
+
+# Predict on the test set (type="class" yields factor class predictions)
+nn_pred <- predict(nn_model, newdata = test_data, type = "class")
+
+# Confusion matrix and accuracy
+conf_mat_nn <- table(Predicted = nn_pred, Actual = test_data$price_class)
+conf_mat_nn 
+accuracy_nn <- mean(nn_pred == test_data$price_class)
+accuracy_nn  
+```
+
+```{r}
+# COMPARE MODEL PERFORMANCES
+
+model_performance <- data.frame(
+  Model    = c("Logistic Regression", "LDA", "QDA", "KNN (k = 5)", "Neural Network"),
+  Accuracy = c(logit_accuracy, lda_accuracy, qda_accuracy, knn_accuracy, accuracy_nn)
+)
+
+model_performance
+```
+
